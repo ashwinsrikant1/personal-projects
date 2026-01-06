@@ -23,11 +23,21 @@ def analyze_nutrition(food_description: str) -> dict:
     Returns:
         Dictionary containing nutritional information (calories, protein, carbs, fat, sugar, fiber)
     """
-    # Use environment variable if available, otherwise use hardcoded placeholder
-    api_key = os.getenv("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)
+    # Try multiple sources for API key:
+    # 1. Streamlit secrets (for Streamlit Cloud deployment)
+    # 2. Environment variable from .env (for local development)
+    # 3. Hardcoded placeholder (fallback)
+    api_key = None
+
+    # Try Streamlit secrets first
+    try:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+    except (KeyError, FileNotFoundError):
+        # Fall back to environment variable
+        api_key = os.getenv("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)
 
     if not api_key or api_key.startswith("# TODO"):
-        raise ValueError("Please set your Anthropic API key in the .env file or as an environment variable")
+        raise ValueError("Please set your Anthropic API key in Streamlit secrets or .env file")
 
     client = anthropic.Anthropic(api_key=api_key)
 
