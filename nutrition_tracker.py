@@ -487,7 +487,7 @@ def main():
                     "Protein",
                     f"{summary['protein']:.1f} g",
                     delta=f"{prot_delta:+.1f}g vs goal ({goals.get('protein', 0)}g)",
-                    delta_color="normal" if prot_delta >= 0 else "inverse"
+                    delta_color="normal"  # More is better: positive=green, negative=red
                 )
 
             with metric_col2:
@@ -513,7 +513,7 @@ def main():
                     "Sugar",
                     f"{summary['sugar']:.1f} g",
                     delta=f"{sugar_delta:+.1f}g vs goal ({goals.get('sugar', 0)}g)",
-                    delta_color="inverse" if sugar_delta > 0 else "normal"
+                    delta_color="inverse"  # Less is better: positive=red, negative=green
                 )
 
                 fiber_delta = summary['fiber'] - goals.get('fiber', 0)
@@ -521,7 +521,7 @@ def main():
                     "Fiber",
                     f"{summary['fiber']:.1f} g",
                     delta=f"{fiber_delta:+.1f}g vs goal ({goals.get('fiber', 0)}g)",
-                    delta_color="normal" if fiber_delta >= 0 else "inverse"
+                    delta_color="normal"  # More is better: positive=green, negative=red
                 )
 
             st.info(f"Total entries today: {summary['entries']}")
