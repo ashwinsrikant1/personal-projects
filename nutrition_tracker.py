@@ -13,6 +13,26 @@ load_dotenv()
 # Hardcoded API key placeholder (fallback)
 ANTHROPIC_API_KEY = "# TODO: Add your Anthropic API key here"
 
+# Daily goals for each profile
+DAILY_GOALS = {
+    "Ashwin": {
+        "calories": 2200,
+        "protein": 120,
+        "fat": 70,
+        "carbs": 210,
+        "fiber": 35,
+        "sugar": 30
+    },
+    "Nandhitha": {
+        "calories": 1700,
+        "protein": 80,
+        "fat": 50,
+        "carbs": 160,
+        "fiber": 25,
+        "sugar": 25
+    }
+}
+
 def analyze_nutrition(food_description: str) -> dict:
     """
     Analyze food description using Claude API and return nutritional information.
@@ -447,20 +467,62 @@ def main():
 
             st.subheader(f"Daily Summary for {profile} - {date_str}")
 
-            # Display metrics in a grid
+            # Get goals for this profile
+            goals = DAILY_GOALS.get(profile, {})
+
+            # Display metrics in a grid with goals
             metric_col1, metric_col2, metric_col3 = st.columns(3)
 
             with metric_col1:
-                st.metric("Calories", f"{summary['calories']:.0f} kcal")
-                st.metric("Protein", f"{summary['protein']:.1f} g")
+                cal_delta = summary['calories'] - goals.get('calories', 0)
+                st.metric(
+                    "Calories",
+                    f"{summary['calories']:.0f} kcal",
+                    delta=f"{cal_delta:+.0f} vs goal ({goals.get('calories', 0)} kcal)",
+                    delta_color="normal" if abs(cal_delta) <= 100 else "off"
+                )
+
+                prot_delta = summary['protein'] - goals.get('protein', 0)
+                st.metric(
+                    "Protein",
+                    f"{summary['protein']:.1f} g",
+                    delta=f"{prot_delta:+.1f}g vs goal ({goals.get('protein', 0)}g)",
+                    delta_color="normal" if prot_delta >= 0 else "inverse"
+                )
 
             with metric_col2:
-                st.metric("Carbs", f"{summary['carbs']:.1f} g")
-                st.metric("Fat", f"{summary['fat']:.1f} g")
+                carb_delta = summary['carbs'] - goals.get('carbs', 0)
+                st.metric(
+                    "Carbs",
+                    f"{summary['carbs']:.1f} g",
+                    delta=f"{carb_delta:+.1f}g vs goal ({goals.get('carbs', 0)}g)",
+                    delta_color="normal" if abs(carb_delta) <= 20 else "off"
+                )
+
+                fat_delta = summary['fat'] - goals.get('fat', 0)
+                st.metric(
+                    "Fat",
+                    f"{summary['fat']:.1f} g",
+                    delta=f"{fat_delta:+.1f}g vs goal ({goals.get('fat', 0)}g)",
+                    delta_color="normal" if abs(fat_delta) <= 10 else "off"
+                )
 
             with metric_col3:
-                st.metric("Sugar", f"{summary['sugar']:.1f} g")
-                st.metric("Fiber", f"{summary['fiber']:.1f} g")
+                sugar_delta = summary['sugar'] - goals.get('sugar', 0)
+                st.metric(
+                    "Sugar",
+                    f"{summary['sugar']:.1f} g",
+                    delta=f"{sugar_delta:+.1f}g vs goal ({goals.get('sugar', 0)}g)",
+                    delta_color="inverse" if sugar_delta > 0 else "normal"
+                )
+
+                fiber_delta = summary['fiber'] - goals.get('fiber', 0)
+                st.metric(
+                    "Fiber",
+                    f"{summary['fiber']:.1f} g",
+                    delta=f"{fiber_delta:+.1f}g vs goal ({goals.get('fiber', 0)}g)",
+                    delta_color="normal" if fiber_delta >= 0 else "inverse"
+                )
 
             st.info(f"Total entries today: {summary['entries']}")
 
@@ -480,8 +542,11 @@ def main():
             trend_data = get_7day_trend(df, profile, date_str)
 
             if not trend_data.empty and trend_data[selected_macro].sum() > 0:
-                # Create bar chart with Altair
-                chart = alt.Chart(trend_data).mark_bar().encode(
+                # Get goal for selected macro
+                macro_goal = DAILY_GOALS.get(profile, {}).get(selected_macro, 0)
+
+                # Create bar chart
+                bars = alt.Chart(trend_data).mark_bar().encode(
                     x=alt.X('date:N', title='Date', axis=alt.Axis(labelAngle=-45)),
                     y=alt.Y(f'{selected_macro}:Q', title=f'{selected_macro.capitalize()} ({"kcal" if selected_macro == "calories" else "g"})'),
                     tooltip=[
@@ -491,11 +556,25 @@ def main():
                 ).properties(
                     width=600,
                     height=300
-                ).configure_mark(
-                    color='#FF4B4B'  # Streamlit red
+                )
+
+                # Create goal line
+                goal_line = alt.Chart(pd.DataFrame({'goal': [macro_goal]})).mark_rule(
+                    color='green',
+                    strokeDash=[5, 5],
+                    size=2
+                ).encode(
+                    y='goal:Q',
+                    tooltip=alt.value(f'Goal: {macro_goal}')
+                )
+
+                # Combine charts
+                chart = (bars + goal_line).configure_mark(
+                    color='#FF4B4B'  # Streamlit red for bars
                 )
 
                 st.altair_chart(chart, use_container_width=True)
+                st.caption(f"🎯 Green dashed line shows daily goal: {macro_goal} {'kcal' if selected_macro == 'calories' else 'g'}")
             else:
                 st.info(f"No data available for {selected_macro} in the last 7 days")
 
