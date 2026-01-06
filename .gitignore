@@ -1,0 +1,38 @@
+# Environment variables
+.env
+
+# Virtual environment
+venv/
+nutrition_tracker_env/
+env/
+ENV/
+
+# User data
+nutrition_data.csv
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
