@@ -571,7 +571,52 @@ def main():
     with st.expander("View All Data"):
         df_all = load_from_csv()
         if not df_all.empty:
-            st.write(f"**All Entries ({len(df_all)} total)**")
+            # Filters
+            st.write("**Filters**")
+            filter_col1, filter_col2 = st.columns(2)
+
+            with filter_col1:
+                # Profile filter - multiselect allows viewing multiple profiles
+                selected_profiles = st.multiselect(
+                    "Select Profile(s)",
+                    options=["Ashwin", "Nandhitha"],
+                    default=["Ashwin", "Nandhitha"],
+                    key="profile_filter"
+                )
+
+            with filter_col2:
+                # Date range filter
+                all_dates = pd.to_datetime(df_all['date'])
+                min_date = all_dates.min().date()
+                max_date = all_dates.max().date()
+
+                date_range = st.date_input(
+                    "Select Date Range",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="date_filter"
+                )
+
+            # Apply filters
+            filtered_df = df_all.copy()
+
+            # Filter by profile
+            if selected_profiles:
+                filtered_df = filtered_df[filtered_df['profile'].isin(selected_profiles)]
+
+            # Filter by date range
+            if isinstance(date_range, tuple) and len(date_range) == 2:
+                start_date, end_date = date_range
+                filtered_df = filtered_df[
+                    (pd.to_datetime(filtered_df['date']).dt.date >= start_date) &
+                    (pd.to_datetime(filtered_df['date']).dt.date <= end_date)
+                ]
+            elif date_range:  # Single date selected
+                filtered_df = filtered_df[pd.to_datetime(filtered_df['date']).dt.date == date_range]
+
+            st.markdown("---")
+            st.write(f"**Showing {len(filtered_df)} of {len(df_all)} entries**")
 
             # Initialize session state for editing
             if 'editing_entry' not in st.session_state:
@@ -604,8 +649,8 @@ def main():
 
             st.markdown("---")
 
-            # Display each row
-            for idx, row in df_all.iterrows():
+            # Display each row (filtered)
+            for idx, row in filtered_df.iterrows():
                 is_editing = st.session_state.editing_entry == idx
 
                 if is_editing:
