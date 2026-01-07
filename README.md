@@ -53,6 +53,7 @@ The project is already configured with proper `.gitignore` to exclude sensitive 
 - `.env` (your local API key)
 - `.streamlit/secrets.toml` (local secrets)
 - `nutrition_data.csv` (your personal data)
+- `service_account.json` (not used, but excluded for safety)
 
 ### 2. Deploy on Streamlit Cloud
 
@@ -92,8 +93,12 @@ Share this URL with your wife - she can access it from any device!
 
 ### Notes on Deployment
 
-- **Data Storage**: Each user's browser stores data independently via the CSV file. For shared data between devices, you would need to implement cloud storage (Google Sheets integration is planned for future).
-- **API Costs**: All API calls use your Anthropic API key and credits
+- **Data Storage**: Data is stored in CSV files on Streamlit Cloud. ⚠️ **IMPORTANT**: Streamlit Cloud uses ephemeral storage, which means data will be lost when the app restarts/redeploys.
+- **Data Backup**: Use the **Export/Import Data** feature to backup and restore your data:
+  - Before app restarts, export your data as CSV
+  - After restart, import the CSV to restore your data
+  - Set reminders to export data regularly (e.g., weekly)
+- **API Costs**: All API calls (Anthropic Claude) use your API key and credits
 - **Privacy**: Your API key is stored securely in Streamlit secrets and never exposed in the code
 
 ## Usage
@@ -112,13 +117,39 @@ The app displays:
 - Number of entries logged
 - Detailed view of each food entry
 
+### Export / Import Data
+
+**IMPORTANT for Streamlit Cloud users**: Because Streamlit Cloud uses ephemeral storage, your data will be lost when the app restarts. Use these features to backup and restore your data:
+
+#### Exporting Data
+
+1. Click on the "Export / Import Data" section
+2. Click "Download CSV" button
+3. Save the file to a safe location (e.g., Google Drive, Dropbox)
+4. The filename includes a timestamp: `nutrition_data_backup_YYYYMMDD_HHMMSS.csv`
+
+**Best Practice**: Export your data regularly (e.g., weekly) or before you know the app will restart.
+
+#### Importing Data
+
+1. Click on the "Export / Import Data" section
+2. Click "Choose a CSV file" and select your exported CSV
+3. Preview the data to ensure it's correct
+4. Click "Import Data" to restore your entries
+
+**Note**: Importing adds data to your existing entries. It doesn't replace them. If you want a fresh start, delete entries first.
+
 ## Data Storage
 
-All nutrition data is stored in `nutrition_data.csv` in the same directory as the application. The CSV includes:
+All nutrition data is stored locally in `nutrition_data.csv`. The CSV includes:
 - Profile name
 - Date
 - Food description
 - Nutritional values (calories, protein, carbs, fat, sugar, fiber)
+
+**Local Development**: Data persists in the same directory as the application.
+
+**Streamlit Cloud**: Data is stored on ephemeral storage and will be lost on app restarts. Use Export/Import to backup and restore your data.
 
 ## Running Tests
 

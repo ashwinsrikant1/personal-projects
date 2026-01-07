@@ -209,26 +209,6 @@ def delete_entry(index: int, filename: str = "nutrition_data.csv"):
         df.to_csv(filename, index=False)
 
 
-def clear_all_data(profile: str, filename: str = "nutrition_data.csv"):
-    """
-    Clear all data for a specific profile.
-
-    Args:
-        profile: Profile name to clear data for
-        filename: Name of CSV file
-    """
-    df = load_from_csv(filename)
-    if not df.empty:
-        df = df[df['profile'] != profile]
-        if df.empty:
-            # If no data left, delete the file
-            import os
-            if os.path.exists(filename):
-                os.remove(filename)
-        else:
-            df.to_csv(filename, index=False)
-
-
 def calculate_daily_summary(df: pd.DataFrame, profile: str, date: str) -> dict:
     """
     Calculate daily summary metrics for a specific profile and date.
@@ -566,6 +546,70 @@ def main():
                 st.info("No entries for today yet. Add your first meal!")
         else:
             st.info("No data available. Start by adding your first meal!")
+
+    # Export/Import Data section
+    with st.expander("Export / Import Data"):
+        st.markdown("### Export Data")
+        st.write("Download all your nutrition data as a CSV file for backup.")
+
+        df_export = load_from_csv()
+        if not df_export.empty:
+            # Convert DataFrame to CSV string
+            csv_data = df_export.to_csv(index=False)
+
+            # Create download button
+            st.download_button(
+                label="Download CSV",
+                data=csv_data,
+                file_name=f"nutrition_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                help="Download all nutrition data as CSV"
+            )
+        else:
+            st.info("No data available to export")
+
+        st.markdown("---")
+        st.markdown("### Import Data")
+        st.write("Upload a previously exported CSV file to restore your data.")
+        st.warning("⚠️ Importing will **add** the uploaded data to your existing data. If you want to replace all data, delete entries first.")
+
+        uploaded_file = st.file_uploader("Choose a CSV file", type="csv", key="import_csv")
+
+        if uploaded_file is not None:
+            try:
+                # Read uploaded CSV
+                df_uploaded = pd.read_csv(uploaded_file)
+
+                # Validate columns
+                required_columns = ['profile', 'date', 'food_description', 'calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber']
+                if not all(col in df_uploaded.columns for col in required_columns):
+                    st.error(f"Invalid CSV format. Required columns: {', '.join(required_columns)}")
+                else:
+                    st.success(f"File loaded successfully! Found {len(df_uploaded)} entries.")
+
+                    # Show preview
+                    st.write("**Preview (first 5 rows):**")
+                    st.dataframe(df_uploaded.head())
+
+                    # Import button
+                    if st.button("Import Data", type="primary"):
+                        # Load existing data
+                        df_existing = load_from_csv()
+
+                        # Combine with uploaded data
+                        if not df_existing.empty:
+                            df_combined = pd.concat([df_existing, df_uploaded], ignore_index=True)
+                        else:
+                            df_combined = df_uploaded
+
+                        # Save combined data
+                        df_combined.to_csv("nutrition_data.csv", index=False)
+
+                        st.success(f"Successfully imported {len(df_uploaded)} entries!")
+                        st.rerun()
+
+            except Exception as e:
+                st.error(f"Error reading CSV file: {str(e)}")
 
     # Optional: Show all data
     with st.expander("View All Data"):
