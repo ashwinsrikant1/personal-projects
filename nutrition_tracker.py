@@ -67,7 +67,7 @@ Return ONLY a JSON object with the following fields (all numeric values):
 - protein (g)
 - carbs (g)
 - fat (g)
-- sugar (g)
+- sugar (g) - IMPORTANT: This should be ADDED SUGAR only, NOT total sugar. Do not include natural sugars from fruits, milk, etc.
 - fiber (g)
 
 Food description: {food_description}
@@ -426,34 +426,6 @@ def main():
 
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
-
-        # Data Management section
-        st.markdown("---")
-        st.subheader("⚠️ Data Management")
-
-        # Initialize session state for confirmation
-        if 'confirm_clear' not in st.session_state:
-            st.session_state.confirm_clear = False
-
-        if not st.session_state.confirm_clear:
-            if st.button(f"Clear All Data for {profile}", type="secondary", use_container_width=True):
-                st.session_state.confirm_clear = True
-                st.rerun()
-        else:
-            st.warning(f"⚠️ Are you sure you want to delete ALL nutrition data for {profile}? This cannot be undone!")
-            col_confirm, col_cancel = st.columns(2)
-
-            with col_confirm:
-                if st.button("Yes, Delete All", type="primary", use_container_width=True):
-                    clear_all_data(profile)
-                    st.session_state.confirm_clear = False
-                    st.success(f"All data for {profile} has been deleted.")
-                    st.rerun()
-
-            with col_cancel:
-                if st.button("Cancel", use_container_width=True):
-                    st.session_state.confirm_clear = False
-                    st.rerun()
 
     with col2:
         st.header("Results")
