@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
 import altair as alt
+import base64
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,12 +34,14 @@ DAILY_GOALS = {
     }
 }
 
-def analyze_nutrition(food_description: str) -> dict:
+def analyze_nutrition(food_description: str, image_data: bytes = None, image_type: str = None) -> dict:
     """
-    Analyze food description using Claude API and return nutritional information.
+    Analyze food description and/or image using Claude API and return nutritional information.
 
     Args:
         food_description: Text description of food consumed
+        image_data: Optional image bytes (from uploaded file or camera)
+        image_type: Optional MIME type of the image (e.g., 'image/jpeg', 'image/png')
 
     Returns:
         Dictionary containing nutritional information (calories, protein, carbs, fat, sugar, fiber)
@@ -61,7 +64,7 @@ def analyze_nutrition(food_description: str) -> dict:
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    prompt = f"""Analyze the following food description and provide detailed nutritional information.
+    base_prompt = """Analyze the provided food information and provide detailed nutritional information.
 Return ONLY a JSON object with the following fields (all numeric values):
 - calories (kcal)
 - protein (g)
@@ -70,16 +73,38 @@ Return ONLY a JSON object with the following fields (all numeric values):
 - sugar (g) - IMPORTANT: This should be ADDED SUGAR only, NOT total sugar. Do not include natural sugars from fruits, milk, etc.
 - fiber (g)
 
-Food description: {food_description}
+"""
 
-Return only the JSON object, no other text."""
+    # Build message content based on whether we have an image
+    content = []
+
+    if image_data and image_type:
+        # Add image to content
+        image_base64 = base64.standard_b64encode(image_data).decode("utf-8")
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image_type,
+                "data": image_base64
+            }
+        })
+
+        if food_description.strip():
+            prompt = base_prompt + f"Food description: {food_description}\n\nAlso analyze the attached image which may show nutritional information or the food itself. Use both the description and image to provide accurate nutrition data.\n\nReturn only the JSON object, no other text."
+        else:
+            prompt = base_prompt + "Analyze the attached image which may show nutritional information (nutrition label) or the food itself. Extract or estimate the nutrition data from the image.\n\nReturn only the JSON object, no other text."
+    else:
+        prompt = base_prompt + f"Food description: {food_description}\n\nReturn only the JSON object, no other text."
+
+    content.append({"type": "text", "text": prompt})
 
     try:
         message = client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=1024,
             messages=[
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": content}
             ]
         )
 
@@ -323,6 +348,49 @@ def main():
             height=150
         )
 
+        # Image input section (optional)
+        st.markdown("**Add Photo (Optional)**")
+        st.caption("Upload a photo of nutritional info or food. Works with text description or standalone.")
+
+        # Two options: file upload (desktop) or camera (mobile)
+        image_input_method = st.radio(
+            "Image input method",
+            options=["Upload Photo", "Take Photo (Camera)"],
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+
+        uploaded_image = None
+        image_data = None
+        image_type = None
+
+        if image_input_method == "Upload Photo":
+            uploaded_image = st.file_uploader(
+                "Upload image",
+                type=["jpg", "jpeg", "png", "webp", "gif"],
+                help="Upload a photo of the nutrition label or the food itself",
+                label_visibility="collapsed"
+            )
+        else:
+            uploaded_image = st.camera_input(
+                "Take a photo",
+                help="Take a photo of the nutrition label or food",
+                label_visibility="collapsed"
+            )
+
+        # Process uploaded image if present
+        if uploaded_image is not None:
+            image_data = uploaded_image.getvalue()
+            # Determine image type
+            if uploaded_image.type:
+                image_type = uploaded_image.type
+            else:
+                # Fallback based on file extension or default to jpeg
+                image_type = "image/jpeg"
+
+            # Show preview
+            st.image(uploaded_image, caption="Attached image", width=200)
+
         # Split meal option
         st.markdown("---")
         split_meal = st.checkbox("Split this meal between Ashwin and Nandhitha")
@@ -348,13 +416,22 @@ def main():
         st.markdown("---")
         # Analyze button
         if st.button("Analyze Nutrition", type="primary"):
-            if not food_description.strip():
-                st.error("Please enter a food description")
+            if not food_description.strip() and image_data is None:
+                st.error("Please enter a food description or attach an image")
             else:
                 with st.spinner("Analyzing nutrition..."):
                     try:
-                        # Get nutrition data from Claude
-                        nutrition_data = analyze_nutrition(food_description)
+                        # Get nutrition data from Claude (with optional image)
+                        nutrition_data = analyze_nutrition(food_description, image_data, image_type)
+
+                        # Determine the description to save
+                        if food_description.strip():
+                            saved_description = food_description
+                            if image_data:
+                                saved_description += " (with image)"
+                        else:
+                            # Image-only submission
+                            saved_description = "[Analyzed from image]"
 
                         if split_meal:
                             # Calculate split portions
@@ -370,7 +447,7 @@ def main():
                             primary_record = {
                                 'profile': profile,
                                 'date': date_str,
-                                'food_description': f"{food_description} ({split_percentage}% portion)",
+                                'food_description': f"{saved_description} ({split_percentage}% portion)",
                                 **primary_nutrition
                             }
 
@@ -382,7 +459,7 @@ def main():
                             other_record = {
                                 'profile': other_profile,
                                 'date': date_str,
-                                'food_description': f"{food_description} ({100 - split_percentage}% portion)",
+                                'food_description': f"{saved_description} ({100 - split_percentage}% portion)",
                                 **other_nutrition
                             }
 
@@ -396,7 +473,7 @@ def main():
                             record = {
                                 'profile': profile,
                                 'date': date_str,
-                                'food_description': food_description,
+                                'food_description': saved_description,
                                 **nutrition_data
                             }
                             save_to_csv(record)
