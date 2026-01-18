@@ -743,135 +743,89 @@ def main():
             if 'editing_entry' not in st.session_state:
                 st.session_state.editing_entry = None
 
-            # Create header
-            col_date, col_profile, col_food, col_cals, col_protein, col_carbs, col_fat, col_sugar, col_fiber, col_edit, col_delete = st.columns([0.8, 0.8, 2.5, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.5, 0.5])
-            with col_date:
-                st.write("**Date**")
-            with col_profile:
-                st.write("**Profile**")
-            with col_food:
-                st.write("**Food**")
-            with col_cals:
-                st.write("**Cal**")
-            with col_protein:
-                st.write("**Prot**")
-            with col_carbs:
-                st.write("**Carbs**")
-            with col_fat:
-                st.write("**Fat**")
-            with col_sugar:
-                st.write("**Sugar**")
-            with col_fiber:
-                st.write("**Fiber**")
-            with col_edit:
-                st.write("**Edit**")
-            with col_delete:
-                st.write("**Del**")
-
-            st.markdown("---")
-
-            # Display each row (filtered)
+            # Mobile-friendly card layout using expanders
             for idx, row in filtered_df.iterrows():
                 is_editing = st.session_state.editing_entry == idx
 
-                if is_editing:
-                    # Edit mode
-                    col_date, col_profile, col_food, col_cals, col_protein, col_carbs, col_fat, col_sugar, col_fiber, col_edit, col_delete = st.columns([0.8, 0.8, 2.5, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.5, 0.5])
+                # Create summary for expander header
+                food_preview = row['food_description'][:40]
+                if len(row['food_description']) > 40:
+                    food_preview += "..."
+                header = f"{row['date']} | {row['profile']} | {row['calories']:.0f} cal | {food_preview}"
 
-                    with col_date:
-                        st.text(row['date'])
-                    with col_profile:
-                        st.text(row['profile'])
-                    with col_food:
-                        new_food = st.text_input("Food", value=row['food_description'], key=f"edit_food_{idx}", label_visibility="collapsed")
-                    with col_cals:
-                        new_cals = st.number_input("Cal", value=float(row['calories']), key=f"edit_cal_{idx}", label_visibility="collapsed", step=1.0, format="%.0f")
-                    with col_protein:
-                        new_protein = st.number_input("Prot", value=float(row['protein']), key=f"edit_prot_{idx}", label_visibility="collapsed", step=0.1, format="%.1f")
-                    with col_carbs:
-                        new_carbs = st.number_input("Carbs", value=float(row['carbs']), key=f"edit_carbs_{idx}", label_visibility="collapsed", step=0.1, format="%.1f")
-                    with col_fat:
-                        new_fat = st.number_input("Fat", value=float(row['fat']), key=f"edit_fat_{idx}", label_visibility="collapsed", step=0.1, format="%.1f")
-                    with col_sugar:
-                        new_sugar = st.number_input("Sugar", value=float(row['sugar']), key=f"edit_sugar_{idx}", label_visibility="collapsed", step=0.1, format="%.1f")
-                    with col_fiber:
-                        new_fiber = st.number_input("Fiber", value=float(row['fiber']), key=f"edit_fiber_{idx}", label_visibility="collapsed", step=0.1, format="%.1f")
-                    with col_edit:
-                        if st.button("💾", key=f"save_{idx}", help="Save changes"):
-                            # Check if food description changed
-                            food_changed = new_food != row['food_description']
+                with st.expander(header):
+                    if is_editing:
+                        # Edit mode
+                        st.write("**Edit Entry**")
+                        new_food = st.text_area("Food Description", value=row['food_description'], key=f"edit_food_{idx}")
 
-                            if food_changed:
-                                # Re-analyze with LLM
-                                with st.spinner("Re-analyzing nutrition..."):
-                                    try:
-                                        new_nutrition = analyze_nutrition(new_food)
-                                        updated_data = {
-                                            'food_description': new_food,
-                                            'calories': new_nutrition['calories'],
-                                            'protein': new_nutrition['protein'],
-                                            'carbs': new_nutrition['carbs'],
-                                            'fat': new_nutrition['fat'],
-                                            'sugar': new_nutrition['sugar'],
-                                            'fiber': new_nutrition['fiber']
-                                        }
-                                        update_entry(idx, updated_data)
-                                        st.session_state.editing_entry = None
-                                        st.success("Entry updated with new LLM analysis!")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error re-analyzing: {str(e)}")
-                            else:
-                                # Just update the manual values
-                                updated_data = {
-                                    'calories': new_cals,
-                                    'protein': new_protein,
-                                    'carbs': new_carbs,
-                                    'fat': new_fat,
-                                    'sugar': new_sugar,
-                                    'fiber': new_fiber
-                                }
-                                update_entry(idx, updated_data)
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            new_cals = st.number_input("Calories", value=float(row['calories']), key=f"edit_cal_{idx}", step=1.0, format="%.0f")
+                            new_protein = st.number_input("Protein (g)", value=float(row['protein']), key=f"edit_prot_{idx}", step=0.1, format="%.1f")
+                        with col2:
+                            new_carbs = st.number_input("Carbs (g)", value=float(row['carbs']), key=f"edit_carbs_{idx}", step=0.1, format="%.1f")
+                            new_fat = st.number_input("Fat (g)", value=float(row['fat']), key=f"edit_fat_{idx}", step=0.1, format="%.1f")
+                        with col3:
+                            new_sugar = st.number_input("Sugar (g)", value=float(row['sugar']), key=f"edit_sugar_{idx}", step=0.1, format="%.1f")
+                            new_fiber = st.number_input("Fiber (g)", value=float(row['fiber']), key=f"edit_fiber_{idx}", step=0.1, format="%.1f")
+
+                        btn_col1, btn_col2 = st.columns(2)
+                        with btn_col1:
+                            if st.button("Save", key=f"save_{idx}", type="primary"):
+                                food_changed = new_food != row['food_description']
+                                if food_changed:
+                                    with st.spinner("Re-analyzing nutrition..."):
+                                        try:
+                                            new_nutrition = analyze_nutrition(new_food)
+                                            updated_data = {
+                                                'food_description': new_food,
+                                                'calories': new_nutrition['calories'],
+                                                'protein': new_nutrition['protein'],
+                                                'carbs': new_nutrition['carbs'],
+                                                'fat': new_nutrition['fat'],
+                                                'sugar': new_nutrition['sugar'],
+                                                'fiber': new_nutrition['fiber']
+                                            }
+                                            update_entry(idx, updated_data)
+                                            st.session_state.editing_entry = None
+                                            st.success("Entry updated with new LLM analysis!")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error re-analyzing: {str(e)}")
+                                else:
+                                    updated_data = {
+                                        'calories': new_cals,
+                                        'protein': new_protein,
+                                        'carbs': new_carbs,
+                                        'fat': new_fat,
+                                        'sugar': new_sugar,
+                                        'fiber': new_fiber
+                                    }
+                                    update_entry(idx, updated_data)
+                                    st.session_state.editing_entry = None
+                                    st.success("Entry updated!")
+                                    st.rerun()
+                        with btn_col2:
+                            if st.button("Cancel", key=f"cancel_{idx}"):
                                 st.session_state.editing_entry = None
-                                st.success("Entry updated!")
                                 st.rerun()
-                    with col_delete:
-                        if st.button("✖️", key=f"cancel_{idx}", help="Cancel editing"):
-                            st.session_state.editing_entry = None
-                            st.rerun()
-                else:
-                    # View mode
-                    col_date, col_profile, col_food, col_cals, col_protein, col_carbs, col_fat, col_sugar, col_fiber, col_edit, col_delete = st.columns([0.8, 0.8, 2.5, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 0.5, 0.5])
+                    else:
+                        # View mode
+                        st.write(f"**Food:** {row['food_description']}")
+                        st.write(f"**Calories:** {row['calories']:.0f} kcal")
+                        st.write(f"**Protein:** {row['protein']:.1f}g | **Carbs:** {row['carbs']:.1f}g | **Fat:** {row['fat']:.1f}g")
+                        st.write(f"**Sugar:** {row['sugar']:.1f}g | **Fiber:** {row['fiber']:.1f}g")
 
-                    with col_date:
-                        st.text(row['date'])
-                    with col_profile:
-                        st.text(row['profile'])
-                    with col_food:
-                        food_text = row['food_description'][:30]
-                        if len(row['food_description']) > 30:
-                            food_text += "..."
-                        st.text(food_text)
-                    with col_cals:
-                        st.text(f"{row['calories']:.0f}")
-                    with col_protein:
-                        st.text(f"{row['protein']:.1f}g")
-                    with col_carbs:
-                        st.text(f"{row['carbs']:.1f}g")
-                    with col_fat:
-                        st.text(f"{row['fat']:.1f}g")
-                    with col_sugar:
-                        st.text(f"{row['sugar']:.1f}g")
-                    with col_fiber:
-                        st.text(f"{row['fiber']:.1f}g")
-                    with col_edit:
-                        if st.button("✏️", key=f"edit_{idx}", help="Edit this entry"):
-                            st.session_state.editing_entry = idx
-                            st.rerun()
-                    with col_delete:
-                        if st.button("🗑️", key=f"delete_all_{idx}", help="Delete this entry"):
-                            delete_entry(idx)
-                            st.rerun()
+                        btn_col1, btn_col2 = st.columns(2)
+                        with btn_col1:
+                            if st.button("Edit", key=f"edit_{idx}"):
+                                st.session_state.editing_entry = idx
+                                st.rerun()
+                        with btn_col2:
+                            if st.button("Delete", key=f"delete_all_{idx}"):
+                                delete_entry(idx)
+                                st.rerun()
         else:
             st.info("No data available yet")
 
