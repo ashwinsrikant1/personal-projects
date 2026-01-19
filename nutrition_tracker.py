@@ -7,12 +7,43 @@ import os
 from dotenv import load_dotenv
 import altair as alt
 import base64
+from zoneinfo import ZoneInfo
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Hardcoded API key placeholder (fallback)
 ANTHROPIC_API_KEY = "# TODO: Add your Anthropic API key here"
+
+def get_local_now():
+    """
+    Get current datetime in local timezone.
+    Tries to detect system timezone, falls back to PST if not available.
+
+    Returns:
+        datetime: Current datetime in local timezone
+    """
+    try:
+        # Try multiple methods to get local timezone
+        # Method 1: Try reading from /etc/localtime (works on most Unix systems)
+        import time
+        if hasattr(time, 'tzname') and time.tzname[0]:
+            # Get the timezone name from the system
+            # This will give us the actual timezone like 'PST' or 'EST'
+            # We need to convert to a proper IANA timezone
+            pass
+
+        # Method 2: Use datetime.now().astimezone() which gets local timezone
+        local_now = datetime.now().astimezone()
+        return local_now
+    except:
+        # Fallback to PST (America/Los_Angeles)
+        try:
+            pst_tz = ZoneInfo("America/Los_Angeles")
+            return datetime.now(pst_tz)
+        except:
+            # Ultimate fallback: use naive datetime (will be local time of the server)
+            return datetime.now()
 
 # Daily goals for each profile
 DAILY_GOALS = {
@@ -283,7 +314,7 @@ def get_7day_trend(df: pd.DataFrame, profile: str, end_date: str = None) -> pd.D
         DataFrame with daily aggregated nutrition data for the last 7 days
     """
     if end_date is None:
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        end_date = get_local_now().strftime("%Y-%m-%d")
 
     end = datetime.strptime(end_date, "%Y-%m-%d")
     start = end - timedelta(days=6)  # 7 days including end date
@@ -321,6 +352,12 @@ def main():
     st.title("Nutrition Tracker")
     st.markdown("Track your daily nutrition using AI-powered food analysis")
 
+    # Show current timezone info
+    current_tz = get_local_now()
+    tz_name = current_tz.strftime('%Z')  # Timezone name (e.g., PST, EST)
+    tz_offset = current_tz.strftime('%z')  # Timezone offset (e.g., -0800)
+    st.caption(f"🕐 Using timezone: {tz_name} (UTC{tz_offset[:3]}:{tz_offset[3:]})")
+
     # Two-column layout
     col1, col2 = st.columns([1, 1])
 
@@ -337,7 +374,7 @@ def main():
         # Date picker
         selected_date = st.date_input(
             "Date",
-            value=datetime.now()
+            value=get_local_now().date()
         )
         date_str = selected_date.strftime("%Y-%m-%d")
 
@@ -638,7 +675,7 @@ def main():
             st.download_button(
                 label="Download CSV",
                 data=csv_data,
-                file_name=f"nutrition_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                file_name=f"nutrition_data_backup_{get_local_now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 help="Download all nutrition data as CSV"
             )
