@@ -18,31 +18,31 @@ ANTHROPIC_API_KEY = "# TODO: Add your Anthropic API key here"
 def get_local_now():
     """
     Get current datetime in local timezone.
-    Tries to detect system timezone, falls back to PST if not available.
+    Uses PST by default, or local system timezone if explicitly running locally.
 
     Returns:
-        datetime: Current datetime in local timezone
+        datetime: Current datetime in PST or local timezone
     """
     try:
-        # Try multiple methods to get local timezone
-        # Method 1: Try reading from /etc/localtime (works on most Unix systems)
-        import time
-        if hasattr(time, 'tzname') and time.tzname[0]:
-            # Get the timezone name from the system
-            # This will give us the actual timezone like 'PST' or 'EST'
-            # We need to convert to a proper IANA timezone
-            pass
-
-        # Method 2: Use datetime.now().astimezone() which gets local timezone
+        # Check if we're running in a cloud environment (like Streamlit Cloud)
+        # by detecting if the system timezone is UTC
         local_now = datetime.now().astimezone()
-        return local_now
+        tz_name = local_now.strftime('%Z')
+
+        # If system is UTC (typical for cloud deployments), use PST instead
+        if tz_name == 'UTC':
+            pst_tz = ZoneInfo("America/Los_Angeles")
+            return datetime.now(pst_tz)
+        else:
+            # Use local system timezone (for local development)
+            return local_now
     except:
         # Fallback to PST (America/Los_Angeles)
         try:
             pst_tz = ZoneInfo("America/Los_Angeles")
             return datetime.now(pst_tz)
         except:
-            # Ultimate fallback: use naive datetime (will be local time of the server)
+            # Ultimate fallback: use naive datetime
             return datetime.now()
 
 # Daily goals for each profile
