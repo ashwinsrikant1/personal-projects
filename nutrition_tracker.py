@@ -378,12 +378,26 @@ def main():
         )
         date_str = selected_date.strftime("%Y-%m-%d")
 
-        # Food description text area
+        # Initialize session state for food description if not exists
+        if 'food_description' not in st.session_state:
+            st.session_state.food_description = ""
+
+        # Food description text area with clear functionality
         food_description = st.text_area(
             "Food Description",
+            value=st.session_state.food_description,
             placeholder="E.g., 2 scrambled eggs, 1 slice of whole wheat toast with butter, 1 cup of coffee with milk",
-            height=150
+            height=150,
+            key="food_input"
         )
+
+        # Update session state when user types
+        st.session_state.food_description = food_description
+
+        # Clear button
+        if st.button("Clear Description", help="Clear the food description text"):
+            st.session_state.food_description = ""
+            st.rerun()
 
         # Image input section (optional)
         st.markdown("**Add Photo (Optional)**")
@@ -515,6 +529,9 @@ def main():
                             }
                             save_to_csv(record)
                             st.success("Nutrition data saved successfully!")
+
+                        # Clear the food description after successful save
+                        st.session_state.food_description = ""
 
                         st.rerun()
 
