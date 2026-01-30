@@ -379,25 +379,28 @@ def main():
         date_str = selected_date.strftime("%Y-%m-%d")
 
         # Initialize session state for food description if not exists
-        if 'food_description' not in st.session_state:
-            st.session_state.food_description = ""
+        if 'food_input' not in st.session_state:
+            st.session_state.food_input = ""
+
+        # Check if we need to clear after successful save (must happen BEFORE widget renders)
+        if st.session_state.get('clear_after_save', False):
+            st.session_state.food_input = ""
+            st.session_state.clear_after_save = False
+
+        # Callback function to clear the description
+        def clear_food_description():
+            st.session_state.food_input = ""
 
         # Food description text area with clear functionality
         food_description = st.text_area(
             "Food Description",
-            value=st.session_state.food_description,
             placeholder="E.g., 2 scrambled eggs, 1 slice of whole wheat toast with butter, 1 cup of coffee with milk",
             height=150,
             key="food_input"
         )
 
-        # Update session state when user types
-        st.session_state.food_description = food_description
-
-        # Clear button
-        if st.button("Clear Description", help="Clear the food description text"):
-            st.session_state.food_description = ""
-            st.rerun()
+        # Clear button - uses on_click callback which runs before rerun
+        st.button("Clear Description", help="Clear the food description text", on_click=clear_food_description)
 
         # Image input section (optional)
         st.markdown("**Add Photo (Optional)**")
@@ -530,8 +533,8 @@ def main():
                             save_to_csv(record)
                             st.success("Nutrition data saved successfully!")
 
-                        # Clear the food description after successful save
-                        st.session_state.food_description = ""
+                        # Set flag to clear the food description on next rerun (before widget renders)
+                        st.session_state.clear_after_save = True
 
                         st.rerun()
 
