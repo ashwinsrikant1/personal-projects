@@ -1,5 +1,6 @@
 import streamlit as st
 import anthropic
+import google.generativeai as genai
 import pandas as pd
 import json
 from datetime import datetime, timedelta
@@ -8,6 +9,8 @@ from dotenv import load_dotenv
 import altair as alt
 import base64
 from zoneinfo import ZoneInfo
+from PIL import Image
+import io
 
 # Load environment variables from .env file
 load_dotenv()
@@ -65,36 +68,8 @@ DAILY_GOALS = {
     }
 }
 
-def analyze_nutrition(food_description: str, image_data: bytes = None, image_type: str = None) -> dict:
-    """
-    Analyze food description and/or image using Claude API and return nutritional information.
-
-    Args:
-        food_description: Text description of food consumed
-        image_data: Optional image bytes (from uploaded file or camera)
-        image_type: Optional MIME type of the image (e.g., 'image/jpeg', 'image/png')
-
-    Returns:
-        Dictionary containing nutritional information (calories, protein, carbs, fat, sugar, fiber)
-    """
-    # Try multiple sources for API key:
-    # 1. Streamlit secrets (for Streamlit Cloud deployment)
-    # 2. Environment variable from .env (for local development)
-    # 3. Hardcoded placeholder (fallback)
-    api_key = None
-
-    # Try Streamlit secrets first
-    try:
-        api_key = st.secrets["ANTHROPIC_API_KEY"]
-    except (KeyError, FileNotFoundError):
-        # Fall back to environment variable
-        api_key = os.getenv("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)
-
-    if not api_key or api_key.startswith("# TODO"):
-        raise ValueError("Please set your Anthropic API key in Streamlit secrets or .env file")
-
-    client = anthropic.Anthropic(api_key=api_key)
-
+def get_nutrition_prompt(food_description: str, has_image: bool) -> str:
+    """Generate the prompt for nutrition analysis."""
     base_prompt = """Analyze the provided food information and provide detailed nutritional information.
 Return ONLY a JSON object with the following fields (all numeric values):
 - calories (kcal)
@@ -105,12 +80,63 @@ Return ONLY a JSON object with the following fields (all numeric values):
 - fiber (g)
 
 """
+    if has_image:
+        if food_description.strip():
+            return base_prompt + f"Food description: {food_description}\n\nAlso analyze the attached image which may show nutritional information or the food itself. Use both the description and image to provide accurate nutrition data.\n\nReturn only the JSON object, no other text."
+        else:
+            return base_prompt + "Analyze the attached image which may show nutritional information (nutrition label) or the food itself. Extract or estimate the nutrition data from the image.\n\nReturn only the JSON object, no other text."
+    else:
+        return base_prompt + f"Food description: {food_description}\n\nReturn only the JSON object, no other text."
 
-    # Build message content based on whether we have an image
+
+def parse_json_response(response_text: str) -> dict:
+    """Extract and parse JSON from LLM response text."""
+    response_text = response_text.strip()
+
+    # Try to extract JSON from markdown code blocks or other formatting
+    if "```json" in response_text:
+        start = response_text.find("```json") + 7
+        end = response_text.find("```", start)
+        response_text = response_text[start:end].strip()
+    elif "```" in response_text:
+        start = response_text.find("```") + 3
+        end = response_text.find("```", start)
+        response_text = response_text[start:end].strip()
+    elif "{" in response_text:
+        start = response_text.find("{")
+        end = response_text.rfind("}") + 1
+        response_text = response_text[start:end]
+
+    nutrition_data = json.loads(response_text)
+
+    # Validate required fields
+    required_fields = ['calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber']
+    for field in required_fields:
+        if field not in nutrition_data:
+            raise ValueError(f"Missing required field: {field}")
+
+    return nutrition_data
+
+
+def analyze_with_claude(food_description: str, image_data: bytes = None, image_type: str = None) -> dict:
+    """Analyze nutrition using Claude API."""
+    # Get API key
+    api_key = None
+    try:
+        api_key = st.secrets["ANTHROPIC_API_KEY"]
+    except (KeyError, FileNotFoundError):
+        api_key = os.getenv("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)
+
+    if not api_key or api_key.startswith("# TODO"):
+        raise ValueError("Anthropic API key not configured")
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Build message content
     content = []
+    has_image = image_data and image_type
 
-    if image_data and image_type:
-        # Add image to content
+    if has_image:
         image_base64 = base64.standard_b64encode(image_data).decode("utf-8")
         content.append({
             "type": "image",
@@ -121,60 +147,96 @@ Return ONLY a JSON object with the following fields (all numeric values):
             }
         })
 
-        if food_description.strip():
-            prompt = base_prompt + f"Food description: {food_description}\n\nAlso analyze the attached image which may show nutritional information or the food itself. Use both the description and image to provide accurate nutrition data.\n\nReturn only the JSON object, no other text."
-        else:
-            prompt = base_prompt + "Analyze the attached image which may show nutritional information (nutrition label) or the food itself. Extract or estimate the nutrition data from the image.\n\nReturn only the JSON object, no other text."
-    else:
-        prompt = base_prompt + f"Food description: {food_description}\n\nReturn only the JSON object, no other text."
-
+    prompt = get_nutrition_prompt(food_description, has_image)
     content.append({"type": "text", "text": prompt})
 
+    message = client.messages.create(
+        model="claude-sonnet-4-5-20250929",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": content}]
+    )
+
+    return parse_json_response(message.content[0].text)
+
+
+def analyze_with_gemini(food_description: str, image_data: bytes = None, image_type: str = None) -> dict:
+    """Analyze nutrition using Gemini API."""
+    # Get API key
+    api_key = None
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=1024,
-            messages=[
-                {"role": "user", "content": content}
-            ]
-        )
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except (KeyError, FileNotFoundError):
+        api_key = os.getenv("GEMINI_API_KEY")
 
-        response_text = message.content[0].text.strip()
+    if not api_key:
+        raise ValueError("Gemini API key not configured")
 
-        # Try to extract JSON from markdown code blocks or other formatting
-        if "```json" in response_text:
-            # Extract JSON from markdown code block
-            start = response_text.find("```json") + 7
-            end = response_text.find("```", start)
-            response_text = response_text[start:end].strip()
-        elif "```" in response_text:
-            # Extract from generic code block
-            start = response_text.find("```") + 3
-            end = response_text.find("```", start)
-            response_text = response_text[start:end].strip()
-        elif "{" in response_text:
-            # Try to extract just the JSON object
-            start = response_text.find("{")
-            end = response_text.rfind("}") + 1
-            response_text = response_text[start:end]
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
-        nutrition_data = json.loads(response_text)
+    has_image = image_data and image_type
+    prompt = get_nutrition_prompt(food_description, has_image)
 
-        # Validate required fields
-        required_fields = ['calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber']
-        for field in required_fields:
-            if field not in nutrition_data:
-                raise ValueError(f"Missing required field: {field}")
+    # Build content for Gemini
+    if has_image:
+        # Convert image bytes to PIL Image for Gemini
+        image = Image.open(io.BytesIO(image_data))
+        response = model.generate_content([prompt, image])
+    else:
+        response = model.generate_content(prompt)
 
-        return nutrition_data
+    return parse_json_response(response.text)
 
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse nutrition data. Response was: {response_text[:200]}... Error: {e}")
-    except ValueError:
-        # Re-raise ValueError (for missing fields)
-        raise
+
+def average_nutrition_data(data1: dict, data2: dict) -> dict:
+    """Average the nutrition values from two results."""
+    fields = ['calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber']
+    return {field: (data1[field] + data2[field]) / 2 for field in fields}
+
+
+def analyze_nutrition(food_description: str, image_data: bytes = None, image_type: str = None) -> dict:
+    """
+    Analyze food description and/or image using both Claude and Gemini APIs,
+    averaging the results for better accuracy.
+
+    Args:
+        food_description: Text description of food consumed
+        image_data: Optional image bytes (from uploaded file or camera)
+        image_type: Optional MIME type of the image (e.g., 'image/jpeg', 'image/png')
+
+    Returns:
+        Dictionary containing nutritional information (calories, protein, carbs, fat, sugar, fiber)
+    """
+    claude_result = None
+    gemini_result = None
+    claude_error = None
+    gemini_error = None
+
+    # Try Claude
+    try:
+        claude_result = analyze_with_claude(food_description, image_data, image_type)
     except Exception as e:
-        raise Exception(f"Error analyzing nutrition: {e}")
+        claude_error = str(e)
+
+    # Try Gemini
+    try:
+        gemini_result = analyze_with_gemini(food_description, image_data, image_type)
+    except Exception as e:
+        gemini_error = str(e)
+
+    # Return based on what succeeded
+    if claude_result and gemini_result:
+        # Both succeeded - average the results
+        return average_nutrition_data(claude_result, gemini_result)
+    elif claude_result:
+        # Only Claude succeeded
+        return claude_result
+    elif gemini_result:
+        # Only Gemini succeeded
+        return gemini_result
+    else:
+        # Both failed
+        raise Exception(f"Both models failed. Claude: {claude_error}. Gemini: {gemini_error}")
 
 
 def save_to_csv(data: dict, filename: str = "nutrition_data.csv"):
