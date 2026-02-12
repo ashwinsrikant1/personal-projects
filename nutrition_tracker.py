@@ -11,12 +11,59 @@ import base64
 from zoneinfo import ZoneInfo
 from PIL import Image
 import io
+import psycopg2
+from psycopg2 import pool
+from contextlib import contextmanager
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Hardcoded API key placeholder (fallback)
 ANTHROPIC_API_KEY = "# TODO: Add your Anthropic API key here"
+
+
+@st.cache_resource
+def get_db_pool():
+    """Create a cached database connection pool."""
+    try:
+        db_config = st.secrets["database"]
+        return psycopg2.pool.SimpleConnectionPool(
+            minconn=1,
+            maxconn=5,
+            host=db_config["host"],
+            port=db_config.get("port", 5432),
+            database=db_config["database"],
+            user=db_config["user"],
+            password=db_config["password"],
+            sslmode=db_config.get("sslmode", "require"),
+        )
+    except (KeyError, FileNotFoundError):
+        return psycopg2.pool.SimpleConnectionPool(
+            minconn=1,
+            maxconn=5,
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            database=os.getenv("DB_NAME", "nutrition_tracker"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            sslmode=os.getenv("DB_SSLMODE", "require"),
+        )
+
+
+@contextmanager
+def get_db_connection():
+    """Context manager that gets/returns connections from pool with auto-commit/rollback."""
+    db_pool = get_db_pool()
+    conn = db_pool.getconn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        db_pool.putconn(conn)
+
 
 def get_local_now():
     """
@@ -246,90 +293,90 @@ def analyze_nutrition(food_description: str, image_data: bytes = None, image_typ
 
 def save_to_csv(data: dict, filename: str = "nutrition_data.csv"):
     """
-    Save nutrition data to CSV file.
+    Save nutrition data to the database.
 
     Args:
         data: Dictionary containing profile, date, food_description, and nutrition info
-        filename: Name of CSV file to save to
+        filename: Unused, kept for backward compatibility
     """
-    # Create DataFrame from single record
-    df_new = pd.DataFrame([data])
-
-    # Check if file exists
-    if os.path.exists(filename):
-        # Load existing data and append
-        df_existing = pd.read_csv(filename)
-        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-        df_combined.to_csv(filename, index=False)
-    else:
-        # Create new file
-        df_new.to_csv(filename, index=False)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO nutrition_entries
+                   (profile, date, food_description, calories, protein, carbs, fat, sugar, fiber)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (data['profile'], data['date'], data['food_description'],
+                 data['calories'], data['protein'], data['carbs'],
+                 data['fat'], data['sugar'], data['fiber'])
+            )
 
 
 def load_from_csv(filename: str = "nutrition_data.csv") -> pd.DataFrame:
     """
-    Load nutrition data from CSV file.
+    Load nutrition data from the database.
 
     Args:
-        filename: Name of CSV file to load from
+        filename: Unused, kept for backward compatibility
 
     Returns:
-        DataFrame containing nutrition data
+        DataFrame containing nutrition data with id as index
     """
-    if os.path.exists(filename):
-        # Read with explicit dtypes to avoid dtype warnings
-        dtypes = {
-            'profile': str,
-            'date': str,
-            'food_description': str,
-            'calories': float,
-            'protein': float,
-            'carbs': float,
-            'fat': float,
-            'sugar': float,
-            'fiber': float
-        }
-        return pd.read_csv(filename, dtype=dtypes)
+    with get_db_connection() as conn:
+        df = pd.read_sql_query(
+            "SELECT id, profile, date, food_description, calories, protein, carbs, fat, sugar, fiber "
+            "FROM nutrition_entries ORDER BY id",
+            conn
+        )
+    if not df.empty:
+        df['date'] = df['date'].astype(str)
+        df = df.set_index('id')
     else:
-        # Return empty DataFrame with expected columns
-        return pd.DataFrame(columns=[
+        df = pd.DataFrame(columns=[
             'profile', 'date', 'food_description',
             'calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber'
         ])
+    return df
 
 
 def update_entry(index: int, updated_data: dict, filename: str = "nutrition_data.csv"):
     """
-    Update a specific entry in the CSV file.
+    Update a specific entry in the database.
 
     Args:
-        index: DataFrame index of the entry to update
+        index: Database row id of the entry to update
         updated_data: Dictionary with updated values
-        filename: Name of CSV file
+        filename: Unused, kept for backward compatibility
     """
-    df = load_from_csv(filename)
-    if not df.empty and index in df.index:
-        for key, value in updated_data.items():
-            # Ensure numeric columns are proper float type
-            if key in ['calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber']:
-                df.at[index, key] = float(value)
-            else:
-                df.at[index, key] = value
-        df.to_csv(filename, index=False)
+    if not updated_data:
+        return
+    set_clauses = []
+    values = []
+    for key, value in updated_data.items():
+        set_clauses.append(f"{key} = %s")
+        if key in ['calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber']:
+            values.append(float(value))
+        else:
+            values.append(value)
+    values.append(index)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE nutrition_entries SET {', '.join(set_clauses)} WHERE id = %s",
+                values
+            )
 
 
 def delete_entry(index: int, filename: str = "nutrition_data.csv"):
     """
-    Delete a specific entry from the CSV file.
+    Delete a specific entry from the database.
 
     Args:
-        index: DataFrame index of the entry to delete
-        filename: Name of CSV file
+        index: Database row id of the entry to delete
+        filename: Unused, kept for backward compatibility
     """
-    df = load_from_csv(filename)
-    if not df.empty:
-        df = df.drop(index)
-        df.to_csv(filename, index=False)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM nutrition_entries WHERE id = %s", (index,))
 
 
 def calculate_daily_summary(df: pd.DataFrame, profile: str, date: str) -> dict:
@@ -755,8 +802,8 @@ def main():
 
         df_export = load_from_csv()
         if not df_export.empty:
-            # Convert DataFrame to CSV string
-            csv_data = df_export.to_csv(index=False)
+            # Reset index so CSV doesn't include the DB id column
+            csv_data = df_export.reset_index(drop=True).to_csv(index=False)
 
             # Create download button
             st.download_button(
@@ -794,17 +841,8 @@ def main():
 
                     # Import button
                     if st.button("Import Data", type="primary"):
-                        # Load existing data
-                        df_existing = load_from_csv()
-
-                        # Combine with uploaded data
-                        if not df_existing.empty:
-                            df_combined = pd.concat([df_existing, df_uploaded], ignore_index=True)
-                        else:
-                            df_combined = df_uploaded
-
-                        # Save combined data
-                        df_combined.to_csv("nutrition_data.csv", index=False)
+                        for _, row in df_uploaded.iterrows():
+                            save_to_csv(row.to_dict())
 
                         st.success(f"Successfully imported {len(df_uploaded)} entries!")
                         st.rerun()

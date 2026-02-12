@@ -2,11 +2,14 @@ import pytest
 import pandas as pd
 import json
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, call
+from contextlib import contextmanager
 from nutrition_tracker import (
     analyze_nutrition,
     save_to_csv,
     load_from_csv,
+    update_entry,
+    delete_entry,
     calculate_daily_summary
 )
 
@@ -36,12 +39,6 @@ def sample_record(sample_nutrition_data):
 
 
 @pytest.fixture
-def temp_csv_file(tmp_path):
-    """Create a temporary CSV file path"""
-    return str(tmp_path / "test_nutrition.csv")
-
-
-@pytest.fixture
 def mock_anthropic_response(sample_nutrition_data):
     """Mock Anthropic API response"""
     mock_message = Mock()
@@ -49,6 +46,22 @@ def mock_anthropic_response(sample_nutrition_data):
     mock_content.text = json.dumps(sample_nutrition_data)
     mock_message.content = [mock_content]
     return mock_message
+
+
+@pytest.fixture
+def mock_db():
+    """Mock database connection context manager."""
+    mock_cursor = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__ = Mock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = Mock(return_value=False)
+
+    @contextmanager
+    def fake_get_db_connection():
+        yield mock_conn
+
+    with patch('nutrition_tracker.get_db_connection', fake_get_db_connection):
+        yield mock_conn, mock_cursor
 
 
 class TestAnalyzeNutrition:
@@ -168,78 +181,93 @@ class TestAnalyzeNutrition:
 
 
 class TestSaveToCsv:
-    """Tests for save_to_csv function"""
+    """Tests for save_to_csv function (now DB-backed)"""
 
-    def test_save_to_csv_new_file(self, sample_record, temp_csv_file):
-        """Test saving to a new CSV file"""
-        save_to_csv(sample_record, temp_csv_file)
+    def test_save_inserts_record(self, sample_record, mock_db):
+        """Test saving inserts a record into the database"""
+        mock_conn, mock_cursor = mock_db
+        save_to_csv(sample_record)
 
-        assert os.path.exists(temp_csv_file)
+        mock_cursor.execute.assert_called_once()
+        args = mock_cursor.execute.call_args
+        assert "INSERT INTO nutrition_entries" in args[0][0]
+        assert args[0][1] == (
+            'Ashwin', '2026-01-06', '2 scrambled eggs with toast',
+            450, 25.5, 35.2, 18.3, 5.1, 4.2
+        )
 
-        df = pd.read_csv(temp_csv_file)
-        assert len(df) == 1
-        assert df.iloc[0]['profile'] == 'Ashwin'
-        assert df.iloc[0]['calories'] == 450
-        assert df.iloc[0]['protein'] == 25.5
+    def test_save_multiple_records(self, sample_record, mock_db):
+        """Test saving multiple records executes multiple inserts"""
+        mock_conn, mock_cursor = mock_db
 
-    def test_save_to_csv_append_to_existing(self, sample_record, temp_csv_file):
-        """Test appending to an existing CSV file"""
-        # Save first record
-        save_to_csv(sample_record, temp_csv_file)
-
-        # Save second record
-        second_record = sample_record.copy()
-        second_record['profile'] = 'Nandhitha'
-        second_record['calories'] = 350
-        save_to_csv(second_record, temp_csv_file)
-
-        df = pd.read_csv(temp_csv_file)
-        assert len(df) == 2
-        assert df.iloc[0]['profile'] == 'Ashwin'
-        assert df.iloc[1]['profile'] == 'Nandhitha'
-
-    def test_save_to_csv_multiple_entries(self, sample_record, temp_csv_file):
-        """Test saving multiple entries"""
         for i in range(5):
             record = sample_record.copy()
             record['calories'] = 100 + (i * 50)
-            save_to_csv(record, temp_csv_file)
+            save_to_csv(record)
 
-        df = pd.read_csv(temp_csv_file)
-        assert len(df) == 5
+        assert mock_cursor.execute.call_count == 5
 
-    def test_save_to_csv_preserves_all_fields(self, sample_record, temp_csv_file):
-        """Test that all fields are preserved when saving"""
-        save_to_csv(sample_record, temp_csv_file)
+    def test_save_preserves_all_fields(self, sample_record, mock_db):
+        """Test that all fields are passed to the INSERT"""
+        mock_conn, mock_cursor = mock_db
+        save_to_csv(sample_record)
 
-        df = pd.read_csv(temp_csv_file)
-        row = df.iloc[0]
-
-        assert row['profile'] == sample_record['profile']
-        assert row['date'] == sample_record['date']
-        assert row['food_description'] == sample_record['food_description']
-        assert row['calories'] == sample_record['calories']
-        assert row['protein'] == sample_record['protein']
-        assert row['carbs'] == sample_record['carbs']
-        assert row['fat'] == sample_record['fat']
-        assert row['sugar'] == sample_record['sugar']
-        assert row['fiber'] == sample_record['fiber']
+        args = mock_cursor.execute.call_args[0][1]
+        assert args[0] == sample_record['profile']
+        assert args[1] == sample_record['date']
+        assert args[2] == sample_record['food_description']
+        assert args[3] == sample_record['calories']
+        assert args[4] == sample_record['protein']
+        assert args[5] == sample_record['carbs']
+        assert args[6] == sample_record['fat']
+        assert args[7] == sample_record['sugar']
+        assert args[8] == sample_record['fiber']
 
 
 class TestLoadFromCsv:
-    """Tests for load_from_csv function"""
+    """Tests for load_from_csv function (now DB-backed)"""
 
-    def test_load_from_csv_existing_file(self, sample_record, temp_csv_file):
-        """Test loading from an existing CSV file"""
-        save_to_csv(sample_record, temp_csv_file)
-        df = load_from_csv(temp_csv_file)
+    def test_load_returns_dataframe_with_data(self):
+        """Test loading returns a DataFrame with data from DB"""
+        expected_df = pd.DataFrame({
+            'id': [1],
+            'profile': ['Ashwin'],
+            'date': ['2026-01-06'],
+            'food_description': ['2 scrambled eggs with toast'],
+            'calories': [450.0],
+            'protein': [25.5],
+            'carbs': [35.2],
+            'fat': [18.3],
+            'sugar': [5.1],
+            'fiber': [4.2]
+        })
+
+        @contextmanager
+        def fake_conn():
+            yield MagicMock()
+
+        with patch('nutrition_tracker.get_db_connection', fake_conn), \
+             patch('nutrition_tracker.pd.read_sql_query', return_value=expected_df):
+            df = load_from_csv()
 
         assert len(df) == 1
         assert df.iloc[0]['profile'] == 'Ashwin'
+        assert df.index[0] == 1  # id is used as index
 
-    def test_load_from_csv_nonexistent_file(self, temp_csv_file):
-        """Test loading from a nonexistent file returns empty DataFrame"""
-        df = load_from_csv(temp_csv_file)
+    def test_load_returns_empty_dataframe_when_no_data(self):
+        """Test loading returns empty DataFrame when DB has no rows"""
+        empty_df = pd.DataFrame(columns=[
+            'id', 'profile', 'date', 'food_description',
+            'calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber'
+        ])
+
+        @contextmanager
+        def fake_conn():
+            yield MagicMock()
+
+        with patch('nutrition_tracker.get_db_connection', fake_conn), \
+             patch('nutrition_tracker.pd.read_sql_query', return_value=empty_df):
+            df = load_from_csv()
 
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 0
@@ -248,24 +276,81 @@ class TestLoadFromCsv:
             'calories', 'protein', 'carbs', 'fat', 'sugar', 'fiber'
         ]
 
-    def test_load_from_csv_multiple_records(self, sample_record, temp_csv_file):
+    def test_load_multiple_records(self):
         """Test loading multiple records"""
-        for i in range(3):
-            record = sample_record.copy()
-            record['calories'] = 100 + (i * 50)
-            save_to_csv(record, temp_csv_file)
+        expected_df = pd.DataFrame({
+            'id': [1, 2, 3],
+            'profile': ['Ashwin', 'Ashwin', 'Ashwin'],
+            'date': ['2026-01-06', '2026-01-06', '2026-01-06'],
+            'food_description': ['eggs', 'toast', 'coffee'],
+            'calories': [150.0, 200.0, 100.0],
+            'protein': [12.0, 5.0, 1.0],
+            'carbs': [1.0, 30.0, 5.0],
+            'fat': [10.0, 3.0, 2.0],
+            'sugar': [0.0, 2.0, 3.0],
+            'fiber': [0.0, 2.0, 0.0]
+        })
 
-        df = load_from_csv(temp_csv_file)
+        @contextmanager
+        def fake_conn():
+            yield MagicMock()
+
+        with patch('nutrition_tracker.get_db_connection', fake_conn), \
+             patch('nutrition_tracker.pd.read_sql_query', return_value=expected_df):
+            df = load_from_csv()
+
         assert len(df) == 3
+
+
+class TestUpdateEntry:
+    """Tests for update_entry function (now DB-backed)"""
+
+    def test_update_entry(self, mock_db):
+        """Test updating an entry executes correct SQL"""
+        mock_conn, mock_cursor = mock_db
+        update_entry(42, {'calories': 500.0, 'protein': 30.0})
+
+        mock_cursor.execute.assert_called_once()
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "UPDATE nutrition_entries" in sql
+        assert "WHERE id = %s" in sql
+        # Last value should be the id
+        values = mock_cursor.execute.call_args[0][1]
+        assert values[-1] == 42
+
+    def test_update_entry_empty_data(self, mock_db):
+        """Test that updating with empty dict does nothing"""
+        mock_conn, mock_cursor = mock_db
+        update_entry(42, {})
+        mock_cursor.execute.assert_not_called()
+
+
+class TestDeleteEntry:
+    """Tests for delete_entry function (now DB-backed)"""
+
+    def test_delete_entry(self, mock_db):
+        """Test deleting an entry executes correct SQL"""
+        mock_conn, mock_cursor = mock_db
+        delete_entry(42)
+
+        mock_cursor.execute.assert_called_once()
+        sql = mock_cursor.execute.call_args[0][0]
+        assert "DELETE FROM nutrition_entries" in sql
+        assert "WHERE id = %s" in sql
+        assert mock_cursor.execute.call_args[0][1] == (42,)
 
 
 class TestCalculateDailySummary:
     """Tests for calculate_daily_summary function"""
 
-    def test_calculate_daily_summary_single_entry(self, sample_record, temp_csv_file):
+    def test_calculate_daily_summary_single_entry(self, sample_nutrition_data):
         """Test daily summary with a single entry"""
-        save_to_csv(sample_record, temp_csv_file)
-        df = load_from_csv(temp_csv_file)
+        df = pd.DataFrame([{
+            'profile': 'Ashwin',
+            'date': '2026-01-06',
+            'food_description': '2 scrambled eggs with toast',
+            **sample_nutrition_data
+        }])
 
         summary = calculate_daily_summary(df, 'Ashwin', '2026-01-06')
 
@@ -277,30 +362,30 @@ class TestCalculateDailySummary:
         assert summary['fiber'] == 4.2
         assert summary['entries'] == 1
 
-    def test_calculate_daily_summary_multiple_entries(self, sample_record, temp_csv_file):
+    def test_calculate_daily_summary_multiple_entries(self, sample_nutrition_data):
         """Test daily summary with multiple entries"""
-        for i in range(3):
-            save_to_csv(sample_record, temp_csv_file)
+        records = [{
+            'profile': 'Ashwin',
+            'date': '2026-01-06',
+            'food_description': f'meal {i}',
+            **sample_nutrition_data
+        } for i in range(3)]
+        df = pd.DataFrame(records)
 
-        df = load_from_csv(temp_csv_file)
         summary = calculate_daily_summary(df, 'Ashwin', '2026-01-06')
 
         assert summary['calories'] == 450 * 3
         assert summary['protein'] == 25.5 * 3
         assert summary['entries'] == 3
 
-    def test_calculate_daily_summary_different_profiles(self, sample_record, temp_csv_file):
+    def test_calculate_daily_summary_different_profiles(self, sample_nutrition_data):
         """Test daily summary filters by profile correctly"""
-        # Add entries for Ashwin
-        save_to_csv(sample_record, temp_csv_file)
-
-        # Add entry for Nandhitha
-        nandhitha_record = sample_record.copy()
-        nandhitha_record['profile'] = 'Nandhitha'
-        nandhitha_record['calories'] = 300
-        save_to_csv(nandhitha_record, temp_csv_file)
-
-        df = load_from_csv(temp_csv_file)
+        records = [
+            {'profile': 'Ashwin', 'date': '2026-01-06', 'food_description': 'eggs', **sample_nutrition_data},
+            {'profile': 'Nandhitha', 'date': '2026-01-06', 'food_description': 'toast',
+             'calories': 300, 'protein': 10.0, 'carbs': 40.0, 'fat': 8.0, 'sugar': 3.0, 'fiber': 2.0},
+        ]
+        df = pd.DataFrame(records)
 
         ashwin_summary = calculate_daily_summary(df, 'Ashwin', '2026-01-06')
         nandhitha_summary = calculate_daily_summary(df, 'Nandhitha', '2026-01-06')
@@ -310,18 +395,14 @@ class TestCalculateDailySummary:
         assert nandhitha_summary['calories'] == 300
         assert nandhitha_summary['entries'] == 1
 
-    def test_calculate_daily_summary_different_dates(self, sample_record, temp_csv_file):
+    def test_calculate_daily_summary_different_dates(self, sample_nutrition_data):
         """Test daily summary filters by date correctly"""
-        # Add entry for Jan 6
-        save_to_csv(sample_record, temp_csv_file)
-
-        # Add entry for Jan 7
-        jan7_record = sample_record.copy()
-        jan7_record['date'] = '2026-01-07'
-        jan7_record['calories'] = 300
-        save_to_csv(jan7_record, temp_csv_file)
-
-        df = load_from_csv(temp_csv_file)
+        records = [
+            {'profile': 'Ashwin', 'date': '2026-01-06', 'food_description': 'eggs', **sample_nutrition_data},
+            {'profile': 'Ashwin', 'date': '2026-01-07', 'food_description': 'toast',
+             'calories': 300, 'protein': 10.0, 'carbs': 40.0, 'fat': 8.0, 'sugar': 3.0, 'fiber': 2.0},
+        ]
+        df = pd.DataFrame(records)
 
         jan6_summary = calculate_daily_summary(df, 'Ashwin', '2026-01-06')
         jan7_summary = calculate_daily_summary(df, 'Ashwin', '2026-01-07')
@@ -348,10 +429,14 @@ class TestCalculateDailySummary:
         assert summary['fiber'] == 0
         assert summary['entries'] == 0
 
-    def test_calculate_daily_summary_wrong_profile(self, sample_record, temp_csv_file):
+    def test_calculate_daily_summary_wrong_profile(self, sample_nutrition_data):
         """Test daily summary with non-matching profile"""
-        save_to_csv(sample_record, temp_csv_file)
-        df = load_from_csv(temp_csv_file)
+        df = pd.DataFrame([{
+            'profile': 'Ashwin',
+            'date': '2026-01-06',
+            'food_description': 'eggs',
+            **sample_nutrition_data
+        }])
 
         summary = calculate_daily_summary(df, 'NonExistentProfile', '2026-01-06')
 
