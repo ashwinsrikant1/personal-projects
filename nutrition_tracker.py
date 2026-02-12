@@ -1,6 +1,6 @@
 import streamlit as st
 import anthropic
-import google.generativeai as genai
+from google import genai
 import pandas as pd
 import json
 from datetime import datetime, timedelta
@@ -171,8 +171,7 @@ def analyze_with_gemini(food_description: str, image_data: bytes = None, image_t
     if not api_key:
         raise ValueError("Gemini API key not configured")
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    client = genai.Client(api_key=api_key)
 
     has_image = image_data and image_type
     prompt = get_nutrition_prompt(food_description, has_image)
@@ -181,9 +180,15 @@ def analyze_with_gemini(food_description: str, image_data: bytes = None, image_t
     if has_image:
         # Convert image bytes to PIL Image for Gemini
         image = Image.open(io.BytesIO(image_data))
-        response = model.generate_content([prompt, image])
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=[prompt, image]
+        )
     else:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt
+        )
 
     return parse_json_response(response.text)
 

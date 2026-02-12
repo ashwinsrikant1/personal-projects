@@ -55,15 +55,24 @@ class TestAnalyzeNutrition:
     """Tests for analyze_nutrition function"""
 
     def test_analyze_nutrition_success(self, mock_anthropic_response, sample_nutrition_data):
-        """Test successful nutrition analysis"""
-        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic:
+        """Test successful nutrition analysis with both models returning same data"""
+        mock_gemini_response = Mock()
+        mock_gemini_response.text = json.dumps(sample_nutrition_data)
+
+        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic, \
+             patch('nutrition_tracker.genai.Client') as mock_genai:
             mock_client = Mock()
             mock_client.messages.create.return_value = mock_anthropic_response
             mock_anthropic.return_value = mock_client
 
-            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key'}):
+            mock_gemini_client = Mock()
+            mock_gemini_client.models.generate_content.return_value = mock_gemini_response
+            mock_genai.return_value = mock_gemini_client
+
+            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key', 'GEMINI_API_KEY': 'test_gemini_key'}):
                 result = analyze_nutrition("2 scrambled eggs with toast")
 
+            # Both models return same data, so average equals the original
             assert result == sample_nutrition_data
             assert 'calories' in result
             assert 'protein' in result
@@ -73,53 +82,74 @@ class TestAnalyzeNutrition:
             assert 'fiber' in result
 
     def test_analyze_nutrition_missing_api_key(self):
-        """Test error when API key is missing"""
+        """Test error when both API keys are missing"""
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="Please set your Anthropic API key"):
+            with pytest.raises(Exception, match="Both models failed"):
                 analyze_nutrition("test food")
 
     def test_analyze_nutrition_invalid_json_response(self):
-        """Test error handling for invalid JSON response"""
+        """Test error handling for invalid JSON response from both models"""
         mock_message = Mock()
         mock_content = Mock()
         mock_content.text = "This is not valid JSON"
         mock_message.content = [mock_content]
 
-        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic:
+        mock_gemini_response = Mock()
+        mock_gemini_response.text = "This is not valid JSON either"
+
+        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic, \
+             patch('nutrition_tracker.genai.Client') as mock_genai:
             mock_client = Mock()
             mock_client.messages.create.return_value = mock_message
             mock_anthropic.return_value = mock_client
 
-            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key'}):
-                with pytest.raises(ValueError, match="Failed to parse nutrition data"):
+            mock_gemini_client = Mock()
+            mock_gemini_client.models.generate_content.return_value = mock_gemini_response
+            mock_genai.return_value = mock_gemini_client
+
+            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key', 'GEMINI_API_KEY': 'test_gemini_key'}):
+                with pytest.raises(Exception, match="Both models failed"):
                     analyze_nutrition("test food")
 
     def test_analyze_nutrition_missing_required_fields(self):
-        """Test error when required fields are missing from response"""
+        """Test error when required fields are missing from both model responses"""
         incomplete_data = {'calories': 100, 'protein': 10}  # Missing other fields
         mock_message = Mock()
         mock_content = Mock()
         mock_content.text = json.dumps(incomplete_data)
         mock_message.content = [mock_content]
 
-        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic:
+        mock_gemini_response = Mock()
+        mock_gemini_response.text = json.dumps(incomplete_data)
+
+        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic, \
+             patch('nutrition_tracker.genai.Client') as mock_genai:
             mock_client = Mock()
             mock_client.messages.create.return_value = mock_message
             mock_anthropic.return_value = mock_client
 
-            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key'}):
-                with pytest.raises(ValueError, match="Missing required field"):
+            mock_gemini_client = Mock()
+            mock_gemini_client.models.generate_content.return_value = mock_gemini_response
+            mock_genai.return_value = mock_gemini_client
+
+            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key', 'GEMINI_API_KEY': 'test_gemini_key'}):
+                with pytest.raises(Exception, match="Both models failed"):
                     analyze_nutrition("test food")
 
     def test_analyze_nutrition_api_error(self):
-        """Test error handling for API errors"""
-        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic:
+        """Test error handling when both APIs fail"""
+        with patch('nutrition_tracker.anthropic.Anthropic') as mock_anthropic, \
+             patch('nutrition_tracker.genai.Client') as mock_genai:
             mock_client = Mock()
             mock_client.messages.create.side_effect = Exception("API Error")
             mock_anthropic.return_value = mock_client
 
-            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key'}):
-                with pytest.raises(Exception, match="Error analyzing nutrition"):
+            mock_gemini_client = Mock()
+            mock_gemini_client.models.generate_content.side_effect = Exception("Gemini API Error")
+            mock_genai.return_value = mock_gemini_client
+
+            with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'test_api_key', 'GEMINI_API_KEY': 'test_gemini_key'}):
+                with pytest.raises(Exception, match="Both models failed"):
                     analyze_nutrition("test food")
 
     def test_analyze_nutrition_uses_correct_model(self, mock_anthropic_response):
